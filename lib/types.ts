@@ -11,6 +11,6 @@ export interface SessionProps {
 }
 
 export interface TokenResult {
-  url: string;
-  token: string;
+  identity: string;
+  accessToken: string;
 }

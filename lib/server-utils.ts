@@ -5,9 +5,9 @@ export function getRoomClient(): RoomServiceClient {
   return new RoomServiceClient(getLiveKitURL());
 }
 
-export function getLiveKitURL(region?: string): string {
+export function getLiveKitURL(region?: string | string[]): string {
   let targetKey = 'LIVEKIT_URL';
-  if (region) {
+  if (region && !Array.isArray(region)) {
     targetKey = `LIVEKIT_URL_${region}`.toUpperCase();
   }
   const url = process.env[targetKey];

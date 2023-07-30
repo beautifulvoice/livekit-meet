@@ -1,109 +1,118 @@
-import { useToast } from '@chakra-ui/react';
-import { GetServerSidePropsContext } from 'next';
+import {
+  LiveKitRoom,
+  PreJoin,
+  LocalUserChoices,
+  useToken,
+  VideoConference,
+  formatChatMessageLinks,
+} from '@livekit/components-react';
+import { LogLevel, RoomOptions, VideoPresets } from 'livekit-client';
+
+import type { NextPage } from 'next';
+import Head from 'next/head';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
-import ActiveRoom from '../../components/ActiveRoom';
-import PreJoin from '../../components/PreJoin';
-import { getRoomClient } from '../../lib/clients';
-import { SessionProps } from '../../lib/types';
+import { useMemo, useState } from 'react';
+import { DebugMode } from '../../lib/Debug';
+import { useServerUrl } from '../../lib/client-utils';
 
-interface RoomProps {
-  roomName: string;
-  numParticipants: number;
-  region?: string;
-  identity?: string;
-  turnServer?: RTCIceServer;
-  forceRelay?: boolean;
-}
-
-const RoomPage = ({ roomName, region, numParticipants, turnServer, forceRelay }: RoomProps) => {
-  const [sessionProps, setSessionProps] = useState<SessionProps>();
-  const toast = useToast();
+const Home: NextPage = () => {
   const router = useRouter();
+  const { name: roomName } = router.query;
 
-  useEffect(() => {
-    if (!roomName.match(/\w{4}\-\w{4}/)) {
-      toast({
-        title: 'Invalid room',
-        duration: 2000,
-        onCloseComplete: () => {
-          router.push('/');
-        },
-      });
-    }
-  }, [roomName, toast, router]);
+  const [preJoinChoices, setPreJoinChoices] = useState<LocalUserChoices | undefined>(undefined);
+  return (
+    <>
+      <Head>
+        <title>LiveKit Meet</title>
+        <link rel="icon" href="/favicon.ico" />
+      </Head>
 
-  if (sessionProps) {
-    return (
-      <ActiveRoom
-        {...sessionProps}
-        region={region}
-        turnServer={turnServer}
-        forceRelay={forceRelay}
-      />
-    );
-  } else {
-    return (
-      <PreJoin
-        startSession={setSessionProps}
-        roomName={roomName}
-        numParticipants={numParticipants}
-      />
-    );
-  }
+      <main data-lk-theme="default">
+        {roomName && !Array.isArray(roomName) && preJoinChoices ? (
+          <ActiveRoom
+            roomName={roomName}
+            userChoices={preJoinChoices}
+            onLeave={() => {
+              router.push('/');
+            }}
+          ></ActiveRoom>
+        ) : (
+          <div style={{ display: 'grid', placeItems: 'center', height: '100%' }}>
+            <PreJoin
+              onError={(err) => console.log('error while setting up prejoin', err)}
+              defaults={{
+                username: '',
+                videoEnabled: true,
+                audioEnabled: true,
+              }}
+              onSubmit={(values) => {
+                console.log('Joining with: ', values);
+                setPreJoinChoices(values);
+              }}
+            ></PreJoin>
+          </div>
+        )}
+      </main>
+    </>
+  );
 };
 
-export const getServerSideProps = async (context: GetServerSidePropsContext) => {
-  const roomName = context.params?.name;
-  const region = context.query?.region;
-  const identity = context.query?.identity;
-  const turn = context.query?.turn;
-  const forceRelay = context.query?.forceRelay;
+export default Home;
 
-  if (typeof roomName !== 'string') {
+type ActiveRoomProps = {
+  userChoices: LocalUserChoices;
+  roomName: string;
+  region?: string;
+  onLeave?: () => void;
+};
+const ActiveRoom = ({ roomName, userChoices, onLeave }: ActiveRoomProps) => {
+  const token = useToken(process.env.NEXT_PUBLIC_LK_TOKEN_ENDPOINT, roomName, {
+    userInfo: {
+      identity: userChoices.username,
+      name: userChoices.username,
+    },
+  });
+
+  const router = useRouter();
+  const { region, hq } = router.query;
+
+  const liveKitUrl = useServerUrl(region as string | undefined);
+
+  const roomOptions = useMemo((): RoomOptions => {
     return {
-      redirect: {
-        destination: '/',
-        permanent: false,
+      videoCaptureDefaults: {
+        deviceId: userChoices.videoDeviceId ?? undefined,
+        resolution: hq === 'true' ? VideoPresets.h2160 : VideoPresets.h720,
       },
+      publishDefaults: {
+        videoSimulcastLayers:
+          hq === 'true'
+            ? [VideoPresets.h1080, VideoPresets.h720]
+            : [VideoPresets.h540, VideoPresets.h216],
+      },
+      audioCaptureDefaults: {
+        deviceId: userChoices.audioDeviceId ?? undefined,
+      },
+      adaptiveStream: { pixelDensity: 'screen' },
+      dynacast: true,
     };
-  }
+  }, [userChoices, hq]);
 
-  const client = getRoomClient();
-  const rooms = await client.listRooms([roomName]);
-  let numParticipants = 0;
-  if (rooms.length > 0) {
-    numParticipants = rooms[0].numParticipants;
-  }
-
-  const props: RoomProps = {
-    roomName,
-    numParticipants,
-  };
-  if (typeof region === 'string') {
-    props.region = region;
-  }
-  if (typeof identity === 'string') {
-    props.identity = identity;
-  }
-  if (typeof turn === 'string') {
-    const parts = turn.split('@');
-    if (parts.length === 2) {
-      const cp = parts[0].split(':');
-      props.turnServer = {
-        urls: [`turn:${parts[1]}?transport=udp`],
-        username: cp[0],
-        credential: cp[1],
-      };
-    }
-  }
-  if (forceRelay === '1' || forceRelay === 'true') {
-    props.forceRelay = true;
-  }
-
-  return {
-    props,
-  };
+  return (
+    <>
+      {liveKitUrl && (
+        <LiveKitRoom
+          token={token}
+          serverUrl={liveKitUrl}
+          options={roomOptions}
+          video={userChoices.videoEnabled}
+          audio={userChoices.audioEnabled}
+          onDisconnected={onLeave}
+        >
+          <VideoConference chatMessageFormatter={formatChatMessageLinks} />
+          <DebugMode logLevel={LogLevel.info} />
+        </LiveKitRoom>
+      )}
+    </>
+  );
 };
-
-export default RoomPage;
