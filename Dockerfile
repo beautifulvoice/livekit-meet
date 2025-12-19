@@ -1,5 +1,5 @@
 # Build BASE
-FROM node:17-alpine as BASE
+FROM node:25.2.0-alpine as BASE
 
 WORKDIR /app
 COPY package.json yarn.lock ./
@@ -9,7 +9,7 @@ RUN apk add --no-cache git curl \
   && yarn cache clean
 
 # Build Image
-FROM node:17-alpine AS BUILD
+FROM node:25.2.0-alpine AS BUILD
 
 WORKDIR /app
 COPY --from=BASE /app/node_modules ./node_modules
@@ -23,7 +23,7 @@ RUN apk add --no-cache git curl \
   && node-prune
 
 # Build production
-FROM node:17-alpine AS PRODUCTION
+FROM node:25.2.0-alpine AS PRODUCTION
 
 WORKDIR /app
 
